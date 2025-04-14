@@ -21,6 +21,8 @@
  *                                                                         *
  ***************************************************************************/
 """
+import os.path
+import os
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
@@ -29,7 +31,8 @@ from qgis.PyQt.QtWidgets import QAction
 from .resources import *
 # Import the code for the dialog
 from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
-import os.path
+from .utility import zoneid_suffixid_combine, split_geometry, build_multipolygon
+
 
 
 class MBRShapefileGenerator:
