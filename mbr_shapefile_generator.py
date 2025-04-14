@@ -23,7 +23,9 @@
 """
 import os.path
 import os
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
+import logging
+import pandas as pd
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QObject, pyqtSignal
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
@@ -34,6 +36,16 @@ from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
 from .utility import zoneid_suffixid_combine, split_geometry, build_multipolygon
 
 
+class LogHandler(logging.Handler):
+    def __init__(self, list_widget):
+        super().__init__()
+        self.list_widget = list_widget
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.list_widget.addItem(msg)
+        self.list_widget.scrollToBottom()
+        
 
 class MBRShapefileGenerator:
     """QGIS Plugin Implementation."""
@@ -182,6 +194,10 @@ class MBRShapefileGenerator:
                 action)
             self.iface.removeToolBarIcon(action)
 
+            
+    def read_file_to_dataframe(self) -> pd.DataFrame:
+        pass
+
 
     def run(self):
         """Run method that performs all the real work"""
@@ -191,6 +207,12 @@ class MBRShapefileGenerator:
         if self.first_start == True:
             self.first_start = False
             self.dlg = MBRShapefileGeneratorDialog()
+            
+            handler = LogHandler(self.dlg.log_list_widget)
+            handler.setFormatter(logging.Formatter('%(levelname)s - %(asctime)s - %(message)s'))
+            logger = logging.getLogger()
+            logger.setLevel(logging.DEBUG)
+            logger.addHandler(handler)
 
         # show the dialog
         self.dlg.show()
