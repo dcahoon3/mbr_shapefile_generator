@@ -25,7 +25,7 @@ import os.path
 import os
 import logging
 import pandas as pd
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QObject, pyqtSignal
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
@@ -33,7 +33,7 @@ from qgis.PyQt.QtWidgets import QAction
 from .resources import *
 # Import the code for the dialog
 from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
-from .utility import zoneid_suffixid_combine, split_geometry, build_multipolygon
+from .utility import zoneid_suffixid_combine, split_geometry, build_multipolygon, REQUIRED_HEADERS
 
 
 class LogHandler(logging.Handler):
@@ -45,7 +45,7 @@ class LogHandler(logging.Handler):
         msg = self.format(record)
         self.list_widget.addItem(msg)
         self.list_widget.scrollToBottom()
-        
+
 
 class MBRShapefileGenerator:
     """QGIS Plugin Implementation."""
@@ -82,6 +82,17 @@ class MBRShapefileGenerator:
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
 
+        self.dlg = MBRShapefileGeneratorDialog()
+
+        handler = LogHandler(self.dlg.log_list_widget)
+        handler.setFormatter(logging.Formatter(
+            '%(levelname)s - %(asctime)s - %(message)s'))
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.addHandler(handler)
+
+        self._connect_signals()
+
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
         """Get the translation for a string using Qt translation API.
@@ -97,18 +108,17 @@ class MBRShapefileGenerator:
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('MBRShapefileGenerator', message)
 
-
     def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
+            self,
+            icon_path,
+            text,
+            callback,
+            enabled_flag=True,
+            add_to_menu=True,
+            add_to_toolbar=True,
+            status_tip=None,
+            whats_this=None,
+            parent=None):
         """Add a toolbar icon to the toolbar.
 
         :param icon_path: Path to the icon for this action. Can be a resource
@@ -185,7 +195,6 @@ class MBRShapefileGenerator:
         # will be set False in run()
         self.first_start = True
 
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -194,10 +203,72 @@ class MBRShapefileGenerator:
                 action)
             self.iface.removeToolBarIcon(action)
 
-            
-    def read_file_to_dataframe(self) -> pd.DataFrame:
-        pass
+    def _connect_signals(self):
+        self.dlg.input_file_widget.fileChanged.connect(
+            self.parse_initial_output_dir)
+        self.dlg.input_file_widget.fileChanged.connect(
+            self.read_file_to_dataframe)
 
+    def read_file_to_dataframe(self) -> pd.DataFrame | None:
+        """Takes the file path from the input file widget and reads the file into a pandas dataframe.
+        The function checks if the file exists, if it is a file, and if it is a csv or xlsx file.
+        Then it reads the file into a pandas dataframe and cleans it.
+
+        Returns:
+            pd.DataFrame | None: geometry dataframe if the file is read successfully, None otherwise.
+        """
+        path = self.dlg.input_file_widget.filePath()
+        if not os.path.exists(path):
+            self.logger.error("File does not exist %s", path)
+            return None
+        if not os.path.isfile(path):
+            self.logger.error("File is not a file %s", path)
+            return None
+        if not path.endswith('.csv') and not path.endswith('.xlsx'):
+            self.logger.error("File is not a csv or xlsx %s", path)
+            return None
+        if path.endswith('csv'):
+            df = pd.read_csv(path)
+            df = self.clean_dataframe(df)
+            return df
+        elif path.endswith('xlsx'):
+            df = pd.read_excel(path)
+            df = self.clean_dataframe(df)
+            return df
+        return None
+
+    def clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame | None:
+        """Cleans the dataframe by renaming the columns to lowercase and checking for required headers.
+        It also creates a new column 'zoneid_suffixid' by combining the 'zoneid' and 'suffixid' columns 
+        using the zoneid_suffixid_combine function.
+
+        Args:
+            df (pd.DataFrame): geometry dataframe
+
+        Returns:
+            pd.DataFrame | None: cleaned dataframe if the required headers are present, None otherwise.
+        """
+        df.columns = df.columns.str.lower()
+        if not all(o in df.columns for o in REQUIRED_HEADERS):
+            self.logger.error("Input file missing the following required headers: %s",
+                              [o for o in REQUIRED_HEADERS if o not in df.columns])
+            return None
+        df['zoneid_suffixid'] = df.apply(zoneid_suffixid_combine, axis=1)
+        return df
+
+    def parse_initial_output_dir(self):
+        """Changes the initial output directory widget to the directory of the input file in the input file widget.
+        """
+        path = self.dlg.input_file_widget.filePath()
+        dir_path = os.path.dirname(path)
+        if not os.path.exists(dir_path):
+            self.logger.error("Output directory does not exist %s", dir_path)
+            return None
+        if not os.path.isdir(dir_path):
+            self.logger.error(
+                "Output directory is not a directory %s", dir_path)
+            return None
+        self.dlg.output_dir_file_widget.setFilePath(dir_path)
 
     def run(self):
         """Run method that performs all the real work"""
@@ -206,13 +277,6 @@ class MBRShapefileGenerator:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-            self.dlg = MBRShapefileGeneratorDialog()
-            
-            handler = LogHandler(self.dlg.log_list_widget)
-            handler.setFormatter(logging.Formatter('%(levelname)s - %(asctime)s - %(message)s'))
-            logger = logging.getLogger()
-            logger.setLevel(logging.DEBUG)
-            logger.addHandler(handler)
 
         # show the dialog
         self.dlg.show()

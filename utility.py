@@ -3,6 +3,8 @@ from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.polygon import orient
 
 
+REQUIRED_HEADERS = ['zoneid', 'suffixid', 'areanumber', 'seqno', 'x', 'y']
+
 def zoneid_suffixid_combine(row: pd.Series) -> str:
     """Combines zoneid and suffixid columns in a dataframe into a single string.
     The suffixid is appended to the zoneid with an underscore if it is not null or empty.
