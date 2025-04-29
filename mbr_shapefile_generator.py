@@ -25,9 +25,9 @@ import os.path
 import os
 import logging
 import pandas as pd
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -83,6 +83,14 @@ class MBRShapefileGenerator:
         self.first_start = None
 
         self.dlg = MBRShapefileGeneratorDialog()
+        
+        self.df = None
+        self.customer_to_zones = {}  # Maps each customerid → set of zone_ids
+        self.zone_to_customers = {}  # Maps each zone_id → set of customerids
+        
+        # Item lookup dictionaries (to control checkbox states later)
+        self.customer_items = {}  # Maps customerid → QListWidgetItem
+        self.zone_items = {}      # Maps zone_id → QListWidgetItem
 
         handler = LogHandler(self.dlg.log_list_widget)
         handler.setFormatter(logging.Formatter(
@@ -207,15 +215,15 @@ class MBRShapefileGenerator:
         self.dlg.input_file_widget.fileChanged.connect(
             self.parse_initial_output_dir)
         self.dlg.input_file_widget.fileChanged.connect(
-            self.read_file_to_dataframe)
+            self.populate_input_list_widget)
+        self.dlg.customerid_list_widget.itemChanged.connect(self.sync_zone_checkboxes)
+        self.dlg.zoneid_list_widget.itemChanged.connect(self.sync_customer_checkboxes)
 
-    def read_file_to_dataframe(self) -> pd.DataFrame | None:
+    def read_file_to_dataframe(self):
         """Takes the file path from the input file widget and reads the file into a pandas dataframe.
         The function checks if the file exists, if it is a file, and if it is a csv or xlsx file.
-        Then it reads the file into a pandas dataframe and cleans it.
-
-        Returns:
-            pd.DataFrame | None: geometry dataframe if the file is read successfully, None otherwise.
+        Then it reads the file into a pandas dataframe and cleans it. Assigns the cleaned dataframe to self.df
+        or None if the file is not valid.
         """
         path = self.dlg.input_file_widget.filePath()
         if not os.path.exists(path):
@@ -229,13 +237,12 @@ class MBRShapefileGenerator:
             return None
         if path.endswith('csv'):
             df = pd.read_csv(path)
-            df = self.clean_dataframe(df)
-            return df
+            self.df = self.clean_dataframe(df)
         elif path.endswith('xlsx'):
             df = pd.read_excel(path)
-            df = self.clean_dataframe(df)
-            return df
-        return None
+            self.df = self.clean_dataframe(df)
+        else:
+            self.df = None
 
     def clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """Cleans the dataframe by renaming the columns to lowercase and checking for required headers.
@@ -269,6 +276,83 @@ class MBRShapefileGenerator:
                 "Output directory is not a directory %s", dir_path)
             return None
         self.dlg.output_dir_file_widget.setFilePath(dir_path)
+    
+    def populate_input_list_widget(self):
+        """Populates the input list widget with the unique customerids and zoneid_suffixids from the dataframe.
+        It also creates a mapping of customerids to zoneid_suffixids and zoneid_suffixids to customerids.
+        The customerid and zoneid_suffixid checkboxes are set to checked by default.
+        The function also clears the list widgets before populating them to avoid duplicates.
+        If the dataframe is None, it does nothing.
+        """
+        self.read_file_to_dataframe()
+        if self.df is not None:
+            unique_customers = sorted(set(self.df['customerid']))
+            unique_zones = sorted(set(self.df['zoneid_suffixid']))
+            self.customer_to_zones = self.df.groupby('customerid')['zoneid_suffixid'].apply(set).to_dict()
+            # zoneid_suffixid → set of customerids (reverse mapping)
+            self.zone_to_customers = self.df.groupby('zoneid_suffixid')['customerid'].apply(set).to_dict()
+            self.dlg.customerid_list_widget.clear()
+            self.dlg.zoneid_list_widget.clear()
+            
+            for customer in unique_customers:
+                item = QListWidgetItem(str(customer))
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)  # Default state: checked
+                self.dlg.customerid_list_widget.addItem(item)
+                self.customer_items[customer] = item
+
+            for zone in unique_zones:
+                item = QListWidgetItem(str(zone))
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)  # Default state: checked
+                self.dlg.zoneid_list_widget.addItem(item)
+                self.zone_items[zone] = item
+                
+    def sync_zone_checkboxes(self, changed_item: QListWidgetItem):
+        """Updates the zone checkboxes based on the customer checkboxes.
+        If a customer checkbox is unchecked, all related zone checkboxes are unchecked.
+
+        Args:
+            changed_item (QListWidgetItem): List widget item that was changed.
+        """
+        customer = changed_item.text()
+        is_checked = changed_item.checkState() == Qt.Checked
+        related_zones = self.customer_to_zones.get(customer, set())
+        if not is_checked:
+            self.dlg.zoneid_list_widget.blockSignals(True)
+            for zone in related_zones:
+                item = self.zone_items.get(zone)
+                if item and item.checkState() != Qt.Unchecked:
+                    item.setCheckState(Qt.Unchecked)
+            self.dlg.zoneid_list_widget.blockSignals(False)
+        
+    def sync_customer_checkboxes(self, changed_item: QListWidgetItem):
+        """Updates the customer checkboxes based on the zone checkboxes. If all 
+        zones for a customer are unchecked, the customer checkbox is unchecked.
+        If any zone for a customer is checked, the customer checkbox is checked.
+
+        Args:
+            changed_item (QListWidgetItem): List widget item that was changed.
+        """
+        zone = changed_item.text()
+        related_customers = self.zone_to_customers.get(zone, set())
+
+        self.dlg.customerid_list_widget.blockSignals(True)
+        for customer in related_customers:
+            zones_for_customer = self.customer_to_zones.get(customer, set())
+            checked_zones = sum(
+                self.zone_items[z].checkState() == Qt.Checked
+                for z in zones_for_customer
+                if z in self.zone_items
+            )
+            print(checked_zones)
+            customer_item = self.customer_items.get(customer)
+            if customer_item:
+                if checked_zones > 0:
+                    customer_item.setCheckState(Qt.Checked)
+                else:
+                    customer_item.setCheckState(Qt.Unchecked)
+        self.dlg.customerid_list_widget.blockSignals(False)
 
     def run(self):
         """Run method that performs all the real work"""
