@@ -308,6 +308,8 @@ class MBRShapefileGenerator:
                 self.dlg.zoneid_list_widget.addItem(item)
                 self.zone_items[zone] = item
                 
+            self.update_process_button_state()
+                
     def sync_zone_checkboxes(self, changed_item: QListWidgetItem):
         """Updates the zone checkboxes based on the customer checkboxes.
         If a customer checkbox is unchecked, all related zone checkboxes are unchecked.
@@ -325,6 +327,7 @@ class MBRShapefileGenerator:
                 if item and item.checkState() != Qt.Unchecked:
                     item.setCheckState(Qt.Unchecked)
             self.dlg.zoneid_list_widget.blockSignals(False)
+        self.update_process_button_state()
         
     def sync_customer_checkboxes(self, changed_item: QListWidgetItem):
         """Updates the customer checkboxes based on the zone checkboxes. If all 
@@ -345,7 +348,6 @@ class MBRShapefileGenerator:
                 for z in zones_for_customer
                 if z in self.zone_items
             )
-            print(checked_zones)
             customer_item = self.customer_items.get(customer)
             if customer_item:
                 if checked_zones > 0:
@@ -353,7 +355,52 @@ class MBRShapefileGenerator:
                 else:
                     customer_item.setCheckState(Qt.Unchecked)
         self.dlg.customerid_list_widget.blockSignals(False)
+        self.update_process_button_state()
 
+    def update_process_button_state(self):
+        """Performs a sequence of checks to determine if the process button should be enabled or disabled.
+        The checks include:
+        - If the input file exists and is a valid file
+        - If the input file is a csv or xlsx file
+        - If the dataframe is not None
+        - If the customerid list widget has items
+        - If the zoneid list widget has items
+        - If at least one customerid is selected
+        - If at least one zoneid_suffixid is selected
+        If any of these checks fail, the process button is disabled and a tooltip is set to inform the user.
+        If all checks pass, the process button is enabled and a tooltip is set to inform the user.
+        """
+        if not os.path.isfile(self.dlg.input_file_widget.filePath()):
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("Please select a valid input file.")
+            return
+        if not self.dlg.input_file_widget.filePath().endswith('.csv') and not self.dlg.input_file_widget.filePath().endswith('.xlsx'):
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("File is not a csv or xlsx")
+            return
+        if self.df is None:
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("Unable to read input file.")
+            return
+        if self.dlg.customerid_list_widget.count() == 0:
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("No customerids found in input file.")
+            return
+        if self.dlg.zoneid_list_widget.count() == 0:
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("No zoneid_suffixids found in input file.")
+            return
+        if all(item.checkState() == Qt.Unchecked for item in self.customer_items.values()):
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("Please select at least one customerid.")
+            return
+        if all(item.checkState() == Qt.Unchecked for item in self.zone_items.values()):
+            self.dlg.process_button.setEnabled(False)
+            self.dlg.process_button.setToolTip("Please select at least one zoneid_suffixid.")
+            return
+        self.dlg.process_button.setEnabled(True)
+        self.dlg.process_button.setToolTip("Click to process the selected customers and zones.")
+        
     def run(self):
         """Run method that performs all the real work"""
 
