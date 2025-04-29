@@ -25,7 +25,8 @@ import os.path
 import os
 import logging
 import pandas as pd
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
+import geopandas as gpd
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QObject, pyqtSignal
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
 
@@ -33,18 +34,20 @@ from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
 from .resources import *
 # Import the code for the dialog
 from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
-from .utility import zoneid_suffixid_combine, split_geometry, build_multipolygon, REQUIRED_HEADERS
+from .utility import zoneid_suffixid_combine, build_multipolygon, REQUIRED_HEADERS
 
+
+class LogEmitter(QObject):
+    log_signal = pyqtSignal(str)
 
 class LogHandler(logging.Handler):
-    def __init__(self, list_widget):
+    def __init__(self, emitter):
         super().__init__()
-        self.list_widget = list_widget
+        self.emitter = emitter
 
     def emit(self, record):
         msg = self.format(record)
-        self.list_widget.addItem(msg)
-        self.list_widget.scrollToBottom()
+        self.emitter.log_signal.emit(msg)
 
 
 class MBRShapefileGenerator:
@@ -83,21 +86,24 @@ class MBRShapefileGenerator:
         self.first_start = None
 
         self.dlg = MBRShapefileGeneratorDialog()
-        
+
         self.df = None
         self.customer_to_zones = {}  # Maps each customerid → set of zone_ids
         self.zone_to_customers = {}  # Maps each zone_id → set of customerids
-        
+
         # Item lookup dictionaries (to control checkbox states later)
         self.customer_items = {}  # Maps customerid → QListWidgetItem
         self.zone_items = {}      # Maps zone_id → QListWidgetItem
 
-        handler = LogHandler(self.dlg.log_list_widget)
-        handler.setFormatter(logging.Formatter(
-            '%(levelname)s - %(asctime)s - %(message)s'))
-        self.logger = logging.getLogger()
+        self.log_emitter = LogEmitter()
+        self.log_emitter.log_signal.connect(self.dlg.log_list_widget.addItem)
+
+        self.log_handler = LogHandler(self.log_emitter)
+        self.log_handler.setFormatter(logging.Formatter('%(levelname)s - %(asctime)s - %(message)s'))
+
+        self.logger = logging.getLogger("MBRShapefileLogger")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(handler)
+        self.logger.addHandler(self.log_handler)
 
         self._connect_signals()
 
@@ -216,8 +222,17 @@ class MBRShapefileGenerator:
             self.parse_initial_output_dir)
         self.dlg.input_file_widget.fileChanged.connect(
             self.populate_input_list_widget)
-        self.dlg.customerid_list_widget.itemChanged.connect(self.sync_zone_checkboxes)
-        self.dlg.zoneid_list_widget.itemChanged.connect(self.sync_customer_checkboxes)
+        self.dlg.customerid_list_widget.itemChanged.connect(
+            self.sync_zone_checkboxes)
+        self.dlg.zoneid_list_widget.itemChanged.connect(
+            self.sync_customer_checkboxes)
+        self.dlg.process_button.clicked.connect(self.process)
+        self.dlg.destroyed.connect(self.cleanup)
+        
+    def cleanup(self):
+        if hasattr(self, 'logger') and hasattr(self, 'log_handler'):
+            self.logger.removeHandler(self.log_handler)
+            self.log_handler = None
 
     def read_file_to_dataframe(self):
         """Takes the file path from the input file widget and reads the file into a pandas dataframe.
@@ -276,7 +291,7 @@ class MBRShapefileGenerator:
                 "Output directory is not a directory %s", dir_path)
             return None
         self.dlg.output_dir_file_widget.setFilePath(dir_path)
-    
+
     def populate_input_list_widget(self):
         """Populates the input list widget with the unique customerids and zoneid_suffixids from the dataframe.
         It also creates a mapping of customerids to zoneid_suffixids and zoneid_suffixids to customerids.
@@ -288,12 +303,14 @@ class MBRShapefileGenerator:
         if self.df is not None:
             unique_customers = sorted(set(self.df['customerid']))
             unique_zones = sorted(set(self.df['zoneid_suffixid']))
-            self.customer_to_zones = self.df.groupby('customerid')['zoneid_suffixid'].apply(set).to_dict()
+            self.customer_to_zones = self.df.groupby(
+                'customerid')['zoneid_suffixid'].apply(set).to_dict()
             # zoneid_suffixid → set of customerids (reverse mapping)
-            self.zone_to_customers = self.df.groupby('zoneid_suffixid')['customerid'].apply(set).to_dict()
+            self.zone_to_customers = self.df.groupby('zoneid_suffixid')[
+                'customerid'].apply(set).to_dict()
             self.dlg.customerid_list_widget.clear()
             self.dlg.zoneid_list_widget.clear()
-            
+
             for customer in unique_customers:
                 item = QListWidgetItem(str(customer))
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -307,9 +324,9 @@ class MBRShapefileGenerator:
                 item.setCheckState(Qt.Checked)  # Default state: checked
                 self.dlg.zoneid_list_widget.addItem(item)
                 self.zone_items[zone] = item
-                
+
             self.update_process_button_state()
-                
+
     def sync_zone_checkboxes(self, changed_item: QListWidgetItem):
         """Updates the zone checkboxes based on the customer checkboxes.
         If a customer checkbox is unchecked, all related zone checkboxes are unchecked.
@@ -328,7 +345,7 @@ class MBRShapefileGenerator:
                     item.setCheckState(Qt.Unchecked)
             self.dlg.zoneid_list_widget.blockSignals(False)
         self.update_process_button_state()
-        
+
     def sync_customer_checkboxes(self, changed_item: QListWidgetItem):
         """Updates the customer checkboxes based on the zone checkboxes. If all 
         zones for a customer are unchecked, the customer checkbox is unchecked.
@@ -372,7 +389,8 @@ class MBRShapefileGenerator:
         """
         if not os.path.isfile(self.dlg.input_file_widget.filePath()):
             self.dlg.process_button.setEnabled(False)
-            self.dlg.process_button.setToolTip("Please select a valid input file.")
+            self.dlg.process_button.setToolTip(
+                "Please select a valid input file.")
             return
         if not self.dlg.input_file_widget.filePath().endswith('.csv') and not self.dlg.input_file_widget.filePath().endswith('.xlsx'):
             self.dlg.process_button.setEnabled(False)
@@ -384,23 +402,63 @@ class MBRShapefileGenerator:
             return
         if self.dlg.customerid_list_widget.count() == 0:
             self.dlg.process_button.setEnabled(False)
-            self.dlg.process_button.setToolTip("No customerids found in input file.")
+            self.dlg.process_button.setToolTip(
+                "No customerids found in input file.")
             return
         if self.dlg.zoneid_list_widget.count() == 0:
             self.dlg.process_button.setEnabled(False)
-            self.dlg.process_button.setToolTip("No zoneid_suffixids found in input file.")
+            self.dlg.process_button.setToolTip(
+                "No zoneid_suffixids found in input file.")
             return
         if all(item.checkState() == Qt.Unchecked for item in self.customer_items.values()):
             self.dlg.process_button.setEnabled(False)
-            self.dlg.process_button.setToolTip("Please select at least one customerid.")
+            self.dlg.process_button.setToolTip(
+                "Please select at least one customerid.")
             return
         if all(item.checkState() == Qt.Unchecked for item in self.zone_items.values()):
             self.dlg.process_button.setEnabled(False)
-            self.dlg.process_button.setToolTip("Please select at least one zoneid_suffixid.")
+            self.dlg.process_button.setToolTip(
+                "Please select at least one zoneid_suffixid.")
             return
         self.dlg.process_button.setEnabled(True)
-        self.dlg.process_button.setToolTip("Click to process the selected customers and zones.")
-        
+        self.dlg.process_button.setToolTip(
+            "Click to process the selected customers and zones.")
+
+    def process(self):
+        """Processes the selected customers and zones, creating files/layers for each selected zone.
+        The function first creates a directory for each customerid in the output directory.
+        Then it iterates through the selected customers and zones, creating a shapefile or KML file for each zone.
+        The shapefile or KML file is created using the geopandas library and the build_multipolygon function.
+        """
+        selected_customers = [
+            cid for cid, item in self.customer_items.items()
+            if item.checkState() == Qt.Checked
+        ]
+        selected_zones = [
+            zid for zid, item in self.zone_items.items()
+            if item.checkState() == Qt.Checked
+        ]
+        for customerid in selected_customers:
+            # Add logic for geodatabase creation later
+            output_dir = os.path.join(self.dlg.output_dir_file_widget.filePath(), customerid.lower())
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            customer_zones = self.df['zoneid_suffixid'][self.df['customerid'] == customerid].unique()
+            for zone in customer_zones:
+                if zone not in selected_zones:
+                    continue
+                zone_df = self.df[self.df['zoneid_suffixid'] == zone]
+                polygon = build_multipolygon(zone_df)
+                gdf = gpd.GeoDataFrame(
+                    {'geometry': [polygon]},
+                    crs='EPSG:4326'
+                )
+                if self.dlg.output_type_combo_box.currentText() == 'KML':
+                    gdf.to_file(os.path.join(output_dir, f"{zone}.kml"), driver='KML')
+                elif self.dlg.output_type_combo_box.currentText() == 'Shapefile':
+                    gdf.to_file(os.path.join(output_dir, f"{zone}.shp"), driver='ESRI Shapefile')
+            
+            
     def run(self):
         """Run method that performs all the real work"""
 

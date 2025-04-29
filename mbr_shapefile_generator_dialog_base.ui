@@ -116,7 +116,7 @@
          </item>
          <item>
           <property name="text">
-           <string>KMZ</string>
+           <string>KML</string>
           </property>
          </item>
         </widget>

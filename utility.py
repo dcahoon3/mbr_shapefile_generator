@@ -83,7 +83,6 @@ def build_multipolygon(group_df: pd.DataFrame) -> Polygon or MultiPolygon: # typ
 
     if not polygons:
         return None
-    elif len(polygons) == 1:
+    if len(polygons) == 1:
         return polygons[0]
-    else:
-        return MultiPolygon(polygons)
+    return MultiPolygon(polygons)
