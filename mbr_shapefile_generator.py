@@ -26,6 +26,8 @@ import os
 import logging
 import pandas as pd
 import geopandas as gpd
+from qgis.core import QgsProject, QgsVectorLayer, QgsLayerTreeLayer
+from qgis.utils import iface
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QObject, pyqtSignal
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
@@ -473,13 +475,78 @@ class MBRShapefileGenerator:
                     {'geometry': [polygon]},
                     crs='EPSG:4326'
                 )
+                path = None
                 if self.dlg.output_type_combo_box.currentText() == 'KML':
-                    gdf.to_file(os.path.join(output_dir, f"{zone}.kml"), driver='KML')
+                    path = os.path.join(output_dir, f"{zone}.kml")
+                    gdf.to_file(path, driver='KML')
                     self.logger.info("KML file created for zone %s", zone)
                 elif self.dlg.output_type_combo_box.currentText() == 'Shapefile':
-                    gdf.to_file(os.path.join(output_dir, f"{zone}.shp"), driver='ESRI Shapefile')
+                    path = os.path.join(output_dir, f"{zone}.shp")
+                    gdf.to_file(path, driver='ESRI Shapefile')
                     self.logger.info("Shapefile created for zone %s", zone)
+                if self.dlg.display_check_box.isChecked():
+                    self.add_layer_to_map(path, customerid, zone)
+                    self.zoom_to_layers(selected_customers)
                 self.dlg.progress_bar.setValue(i + 1)
+    
+    def add_layer_to_map(self, path: str, customerid: str, zoneid_suffixid: str):
+        """Adds a layer to the map canvas and sets the active layer to the newly added layer.
+        The layer is added to a group named after the customerid. If the group does not exist, it is created.
+
+        Args:
+            path (str): file path to the shapefile or KML file
+            customerid (str): customer id
+            zoneid_suffixid (str): zone id and suffix id combined
+        """
+        if path is None:
+            return
+        layer = QgsVectorLayer(path, f"{customerid}_{zoneid_suffixid}", "ogr")
+        if not layer.isValid():
+            self.logger.error("Failed to load layer %s", path)
+            return
+        root = QgsProject.instance().layerTreeRoot()
+        group = root.findGroup(customerid)
+        if group is None:
+            group = root.addGroup(customerid)
+            root.insertChildNode(0, group)
+        self.iface.setActiveLayer(layer)
+        self.iface.zoomToActiveLayer()
+        QgsProject.instance().addMapLayer(layer, addToLegend=False)
+        group.insertChildNode(0, QgsLayerTreeLayer(layer))
+    
+    def zoom_to_layers(self, groups: list):
+        """Zooms to the extent of the layers in the specified groups.
+        The function first checks if the group exists in the QGIS interface.
+        If the group exists, it iterates through the layers in the group and combines their extents.
+        Finally, it sets the map canvas extent to the combined extent.
+        If no valid layers are found, it logs a warning message.
+
+        Args:
+            groups (list): List of group names / customer ids to zoom to.
+        """
+        root = QgsProject.instance().layerTreeRoot()
+        combined_extent = None
+
+        for group_name in groups:
+            group = root.findGroup(group_name)
+            if not group:
+                self.logger.warning("Group '%s' not found in QGIS interface.", group_name)
+                continue
+
+            for node in group.findLayers():
+                layer = node.layer()
+                if layer and layer.isValid():
+                    if combined_extent is None:
+                        combined_extent = layer.extent()
+                    else:
+                        combined_extent.combineExtentWith(layer.extent())
+
+        if combined_extent is not None:
+            iface.mapCanvas().setExtent(combined_extent)
+            iface.mapCanvas().refresh()
+            self.logger.info("Zoomed to extent of selected groups.")
+        else:
+            self.logger.warning("No valid layers found to zoom to.")
     
     def reset_ui(self):
         """Resets the UI to its initial state. This includes clearing the input and output file widgets,
