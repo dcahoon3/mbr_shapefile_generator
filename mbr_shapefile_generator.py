@@ -452,15 +452,25 @@ class MBRShapefileGenerator:
                 if zone not in selected_zones:
                     continue
                 zone_df = self.df[self.df['zoneid_suffixid'] == zone]
-                polygon = build_multipolygon(zone_df)
+                try:
+                    polygon = build_multipolygon(zone_df)
+                    self.logger.debug("Polygon successfully built for zone %s", zone)
+                except Exception as e:
+                    self.logger.error("Error building polygon for zone %s: %s", zone, str(e))
+                    continue
+                num_polygons = len(polygon.geoms) if hasattr(polygon, 'geoms') else 1
+                num_holes = sum(len(poly.interiors) for poly in polygon.geoms) if hasattr(polygon, 'geoms') else len(polygon.interiors)
+                self.logger.info("Zone %s generated: %d polygon parts, %d holes", zone, num_polygons, num_holes)
                 gdf = gpd.GeoDataFrame(
                     {'geometry': [polygon]},
                     crs='EPSG:4326'
                 )
                 if self.dlg.output_type_combo_box.currentText() == 'KML':
                     gdf.to_file(os.path.join(output_dir, f"{zone}.kml"), driver='KML')
+                    self.logger.info("KML file created for zone %s", zone)
                 elif self.dlg.output_type_combo_box.currentText() == 'Shapefile':
                     gdf.to_file(os.path.join(output_dir, f"{zone}.shp"), driver='ESRI Shapefile')
+                    self.logger.info("Shapefile created for zone %s", zone)
             
             
     def run(self):
