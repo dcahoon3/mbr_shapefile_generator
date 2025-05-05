@@ -42,3 +42,10 @@ class MBRShapefileGeneratorDialog(QtWidgets.QDialog, FORM_CLASS):
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
+
+    def closeEvent(self, event):
+        """Handle the dialog close event."""
+        # Ensure the log handler is cleaned up
+        if hasattr(self, 'log_handler') and self.log_handler in self.log_handler.logger.handlers:
+            self.log_handler.logger.removeHandler(self.log_handler)
+        super().closeEvent(event)

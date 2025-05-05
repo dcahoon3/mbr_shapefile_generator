@@ -14,43 +14,15 @@
    <string>MBR Shapefile Generator</string>
   </property>
   <layout class="QGridLayout" name="gridLayout_3">
-   <item row="0" column="0">
-    <layout class="QGridLayout" name="gridLayout">
-     <item row="0" column="0">
-      <widget class="QLabel" name="label_2">
-       <property name="text">
-        <string>Input Export File</string>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="1">
-      <widget class="QgsFileWidget" name="input_file_widget">
-       <property name="filter">
-        <string>*.csv;;*.xlsx</string>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="0">
-      <widget class="QLabel" name="label">
-       <property name="text">
-        <string>Output Directory</string>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="1">
-      <widget class="QgsFileWidget" name="output_dir_file_widget">
-       <property name="storageMode">
-        <enum>QgsFileWidget::GetDirectory</enum>
-       </property>
-       <property name="options">
-        <set>QFileDialog::ShowDirsOnly</set>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
    <item row="1" column="0">
     <widget class="Line" name="line">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0">
+    <widget class="Line" name="line_2">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
      </property>
@@ -125,6 +97,51 @@
      </item>
     </layout>
    </item>
+   <item row="0" column="0">
+    <layout class="QGridLayout" name="gridLayout">
+     <item row="0" column="0">
+      <widget class="QLabel" name="label_2">
+       <property name="text">
+        <string>Input Export File</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QgsFileWidget" name="input_file_widget">
+       <property name="filter">
+        <string>*.csv;;*.xlsx</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="label">
+       <property name="text">
+        <string>Output Directory</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QgsFileWidget" name="output_dir_file_widget">
+       <property name="storageMode">
+        <enum>QgsFileWidget::GetDirectory</enum>
+       </property>
+       <property name="options">
+        <set>QFileDialog::ShowDirsOnly</set>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="8" column="0">
+    <widget class="QDialogButtonBox" name="button_box">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close|QDialogButtonBox::Help|QDialogButtonBox::Reset</set>
+     </property>
+    </widget>
+   </item>
    <item row="4" column="0">
     <layout class="QHBoxLayout" name="horizontalLayout" stretch="0,1,0">
      <item>
@@ -165,13 +182,6 @@
      </item>
     </layout>
    </item>
-   <item row="5" column="0">
-    <widget class="Line" name="line_2">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
    <item row="6" column="0">
     <widget class="QProgressBar" name="progress_bar">
      <property name="value">
@@ -186,19 +196,9 @@
     </widget>
    </item>
    <item row="7" column="0">
-    <widget class="QListWidget" name="log_list_widget">
-     <property name="editTriggers">
-      <set>QAbstractItemView::NoEditTriggers</set>
-     </property>
-    </widget>
-   </item>
-   <item row="8" column="0">
-    <widget class="QDialogButtonBox" name="button_box">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-     <property name="standardButtons">
-      <set>QDialogButtonBox::Close|QDialogButtonBox::Help|QDialogButtonBox::Reset</set>
+    <widget class="QPlainTextEdit" name="log_text_edit">
+     <property name="readOnly">
+      <bool>true</bool>
      </property>
     </widget>
    </item>

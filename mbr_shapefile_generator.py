@@ -37,17 +37,16 @@ from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
 from .utility import zoneid_suffixid_combine, build_multipolygon, REQUIRED_HEADERS
 
 
-class LogEmitter(QObject):
+class QTextEditLogger(QObject, logging.Handler):
     log_signal = pyqtSignal(str)
 
-class LogHandler(logging.Handler):
-    def __init__(self, emitter):
-        super().__init__()
-        self.emitter = emitter
-
+    def __init__(self, parent=None):
+        QObject.__init__(self, parent)
+        logging.Handler.__init__(self)
+    
     def emit(self, record):
         msg = self.format(record)
-        self.emitter.log_signal.emit(msg)
+        self.log_signal.emit(msg)
 
 
 class MBRShapefileGenerator:
@@ -95,15 +94,16 @@ class MBRShapefileGenerator:
         self.customer_items = {}  # Maps customerid → QListWidgetItem
         self.zone_items = {}      # Maps zone_id → QListWidgetItem
 
-        self.log_emitter = LogEmitter()
-        self.log_emitter.log_signal.connect(self.dlg.log_list_widget.addItem)
+        self.logger = logging.getLogger()
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
+            
+        self.log_handler = QTextEditLogger(self.dlg)
+        self.log_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+        self.log_handler.log_signal.connect(self.append_log_to_widget)
 
-        self.log_handler = LogHandler(self.log_emitter)
-        self.log_handler.setFormatter(logging.Formatter('%(levelname)s - %(asctime)s - %(message)s'))
-
-        self.logger = logging.getLogger("MBRShapefileLogger")
-        self.logger.setLevel(logging.DEBUG)
         self.logger.addHandler(self.log_handler)
+        self.logger.setLevel(logging.DEBUG)
 
         self._connect_signals()
 
@@ -227,12 +227,16 @@ class MBRShapefileGenerator:
         self.dlg.zoneid_list_widget.itemChanged.connect(
             self.sync_customer_checkboxes)
         self.dlg.process_button.clicked.connect(self.process)
-        self.dlg.destroyed.connect(self.cleanup)
         
-    def cleanup(self):
-        if hasattr(self, 'logger') and hasattr(self, 'log_handler'):
-            self.logger.removeHandler(self.log_handler)
-            self.log_handler = None
+    def append_log_to_widget(self, msg):
+        """Changes the logging mechanism to append the log message to the log text edit widget in the dialog.
+        This is done by emitting a signal from the QTextEditLogger class and connecting it to this method.
+
+        Args:
+            msg (str): log message
+        """
+        if self.dlg and self.dlg.log_text_edit:
+            self.dlg.log_text_edit.appendPlainText(msg)
 
     def read_file_to_dataframe(self):
         """Takes the file path from the input file widget and reads the file into a pandas dataframe.
