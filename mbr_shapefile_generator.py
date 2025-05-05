@@ -28,7 +28,7 @@ import pandas as pd
 import geopandas as gpd
 from qgis.core import QgsProject, QgsVectorLayer, QgsLayerTreeLayer
 from qgis.utils import iface
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QObject, pyqtSignal
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QObject, pyqtSignal, QThread
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
 
@@ -49,6 +49,58 @@ class QTextEditLogger(QObject, logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.log_signal.emit(msg)
+        
+class ProcessWorker(QObject):
+    progress = pyqtSignal(int)
+    saved_path = pyqtSignal(str, str, str)  # path, customerid, zoneid_suffixid
+    log_message = pyqtSignal(int, str)  # level, message
+    finished = pyqtSignal()
+    
+    def __init__(self, df, selected_customers, selected_zones, output_dir, output_type):
+        super().__init__()
+        self.df = df
+        self.selected_customers = selected_customers
+        self.selected_zones = selected_zones
+        self.output_dir = output_dir
+        self.output_type = output_type
+        
+    def run(self):
+        for i, customerid in enumerate(self.selected_customers):
+            # Add logic for geodatabase creation later
+            output_dir = os.path.join(self.output_dir, customerid.lower())
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            customer_zones = self.df['zoneid_suffixid'][self.df['customerid'] == customerid].unique()
+            for zone in customer_zones:
+                if zone not in self.selected_zones:
+                    continue
+                zone_df = self.df[self.df['zoneid_suffixid'] == zone]
+                try:
+                    polygon = build_multipolygon(zone_df)
+                    self.log_message.emit(logging.DEBUG, f"Polygon successfully built for zone {zone}")
+                except Exception as e:
+                    self.log_message.emit(logging.ERROR, f"Error building polygon for zone {zone}: {str(e)}")
+                    continue
+                num_polygons = len(polygon.geoms) if hasattr(polygon, 'geoms') else 1
+                num_holes = sum(len(poly.interiors) for poly in polygon.geoms) if hasattr(polygon, 'geoms') else len(polygon.interiors)
+                self.log_message.emit(logging.INFO, f"Zone {zone} generated: {num_polygons} polygon parts, {num_holes} holes")
+                gdf = gpd.GeoDataFrame(
+                    {'geometry': [polygon]},
+                    crs='EPSG:4326'
+                )
+                
+                path = None
+                if self.output_type == 'KML':
+                    path = os.path.join(output_dir, f"{zone}.kml")
+                    gdf.to_file(path, driver='KML')
+                    self.log_message.emit(logging.INFO, f"KML file created for zone {zone}")
+                elif self.output_type == 'Shapefile':
+                    path = os.path.join(output_dir, f"{zone}.shp")
+                    gdf.to_file(path, driver='ESRI Shapefile')
+                    self.log_message.emit(logging.INFO, f"Shapefile created for zone {zone}")
+                self.saved_path.emit(path, customerid, zone)
+                self.progress.emit(i + 1)
+        self.finished.emit()
 
 
 class MBRShapefileGenerator:
@@ -106,6 +158,9 @@ class MBRShapefileGenerator:
 
         self.logger.addHandler(self.log_handler)
         self.logger.setLevel(logging.DEBUG)
+        
+        self.thread = None
+        self.worker = None
 
         self._connect_signals()
 
@@ -452,42 +507,50 @@ class MBRShapefileGenerator:
         ]
         self.dlg.progress_bar.setMaximum(len(selected_customers))
         self.dlg.progress_bar.setValue(0)
-        for i, customerid in enumerate(selected_customers):
-            # Add logic for geodatabase creation later
-            output_dir = os.path.join(self.dlg.output_dir_file_widget.filePath(), customerid.lower())
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            customer_zones = self.df['zoneid_suffixid'][self.df['customerid'] == customerid].unique()
-            for zone in customer_zones:
-                if zone not in selected_zones:
-                    continue
-                zone_df = self.df[self.df['zoneid_suffixid'] == zone]
-                try:
-                    polygon = build_multipolygon(zone_df)
-                    self.logger.debug("Polygon successfully built for zone %s", zone)
-                except Exception as e:
-                    self.logger.error("Error building polygon for zone %s: %s", zone, str(e))
-                    continue
-                num_polygons = len(polygon.geoms) if hasattr(polygon, 'geoms') else 1
-                num_holes = sum(len(poly.interiors) for poly in polygon.geoms) if hasattr(polygon, 'geoms') else len(polygon.interiors)
-                self.logger.info("Zone %s generated: %d polygon parts, %d holes", zone, num_polygons, num_holes)
-                gdf = gpd.GeoDataFrame(
-                    {'geometry': [polygon]},
-                    crs='EPSG:4326'
-                )
-                path = None
-                if self.dlg.output_type_combo_box.currentText() == 'KML':
-                    path = os.path.join(output_dir, f"{zone}.kml")
-                    gdf.to_file(path, driver='KML')
-                    self.logger.info("KML file created for zone %s", zone)
-                elif self.dlg.output_type_combo_box.currentText() == 'Shapefile':
-                    path = os.path.join(output_dir, f"{zone}.shp")
-                    gdf.to_file(path, driver='ESRI Shapefile')
-                    self.logger.info("Shapefile created for zone %s", zone)
-                if self.dlg.display_check_box.isChecked():
-                    self.add_layer_to_map(path, customerid, zone)
-                    self.zoom_to_layers(selected_customers)
-                self.dlg.progress_bar.setValue(i + 1)
+
+        if self.thread is not None:
+            self.thread.quit()
+            self.thread.wait()
+            self.thread = None
+            self.worker = None
+            
+        self.thread = QThread()
+        self.worker = ProcessWorker(
+            df=self.df,
+            selected_customers=selected_customers,
+            selected_zones=selected_zones,
+            output_dir=self.dlg.output_dir_file_widget.filePath(),
+            output_type=self.dlg.output_type_combo_box.currentText()
+        )
+
+        self.worker.moveToThread(self.thread)
+        self.worker.saved_path.connect(self.add_layer_to_map)
+        self.worker.log_message.connect(self.handle_worker_logs)
+        self.worker.progress.connect(self.dlg.progress_bar.setValue)
+        self.worker.finished.connect(lambda: self.zoom_to_layers(selected_customers))
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.start()
+    
+    def handle_worker_logs(self, level: int, message: str):
+        """Handles the log messages emitted from the worker thread.
+        It checks the logging level and emits the appropriate log message to the logger.
+
+        Args:
+            level (int): logging level enum
+            message (str): log message
+        """
+        if level == logging.DEBUG:
+            self.logger.debug(message)
+        elif level == logging.INFO:
+            self.logger.info(message)
+        elif level == logging.WARNING:
+            self.logger.warning(message)
+        elif level == logging.ERROR:
+            self.logger.error(message)
+        elif level == logging.CRITICAL:
+            self.logger.critical(message)
+
     
     def add_layer_to_map(self, path: str, customerid: str, zoneid_suffixid: str):
         """Adds a layer to the map canvas and sets the active layer to the newly added layer.
@@ -498,21 +561,22 @@ class MBRShapefileGenerator:
             customerid (str): customer id
             zoneid_suffixid (str): zone id and suffix id combined
         """
-        if path is None:
-            return
-        layer = QgsVectorLayer(path, f"{customerid}_{zoneid_suffixid}", "ogr")
-        if not layer.isValid():
-            self.logger.error("Failed to load layer %s", path)
-            return
-        root = QgsProject.instance().layerTreeRoot()
-        group = root.findGroup(customerid)
-        if group is None:
-            group = root.addGroup(customerid)
-            root.insertChildNode(0, group)
-        self.iface.setActiveLayer(layer)
-        self.iface.zoomToActiveLayer()
-        QgsProject.instance().addMapLayer(layer, addToLegend=False)
-        group.insertChildNode(0, QgsLayerTreeLayer(layer))
+        if self.dlg.display_check_box.isChecked():
+            if path is None:
+                return
+            layer = QgsVectorLayer(path, f"{customerid}_{zoneid_suffixid}", "ogr")
+            if not layer.isValid():
+                self.logger.error("Failed to load layer %s", path)
+                return
+            root = QgsProject.instance().layerTreeRoot()
+            group = root.findGroup(customerid)
+            if group is None:
+                group = root.addGroup(customerid)
+                root.insertChildNode(0, group)
+            self.iface.setActiveLayer(layer)
+            self.iface.zoomToActiveLayer()
+            QgsProject.instance().addMapLayer(layer, addToLegend=False)
+            group.insertChildNode(0, QgsLayerTreeLayer(layer))
     
     def zoom_to_layers(self, groups: list):
         """Zooms to the extent of the layers in the specified groups.
@@ -524,29 +588,30 @@ class MBRShapefileGenerator:
         Args:
             groups (list): List of group names / customer ids to zoom to.
         """
-        root = QgsProject.instance().layerTreeRoot()
-        combined_extent = None
+        if self.dlg.display_check_box.isChecked():
+            root = QgsProject.instance().layerTreeRoot()
+            combined_extent = None
 
-        for group_name in groups:
-            group = root.findGroup(group_name)
-            if not group:
-                self.logger.warning("Group '%s' not found in QGIS interface.", group_name)
-                continue
+            for group_name in groups:
+                group = root.findGroup(group_name)
+                if not group:
+                    self.logger.warning("Group '%s' not found in QGIS interface.", group_name)
+                    continue
 
-            for node in group.findLayers():
-                layer = node.layer()
-                if layer and layer.isValid():
-                    if combined_extent is None:
-                        combined_extent = layer.extent()
-                    else:
-                        combined_extent.combineExtentWith(layer.extent())
+                for node in group.findLayers():
+                    layer = node.layer()
+                    if layer and layer.isValid():
+                        if combined_extent is None:
+                            combined_extent = layer.extent()
+                        else:
+                            combined_extent.combineExtentWith(layer.extent())
 
-        if combined_extent is not None:
-            iface.mapCanvas().setExtent(combined_extent)
-            iface.mapCanvas().refresh()
-            self.logger.info("Zoomed to extent of selected groups.")
-        else:
-            self.logger.warning("No valid layers found to zoom to.")
+            if combined_extent is not None:
+                iface.mapCanvas().setExtent(combined_extent)
+                iface.mapCanvas().refresh()
+                self.logger.info("Zoomed to extent of selected groups.")
+            else:
+                self.logger.warning("No valid layers found to zoom to.")
     
     def reset_ui(self):
         """Resets the UI to its initial state. This includes clearing the input and output file widgets,
