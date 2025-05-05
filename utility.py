@@ -1,7 +1,13 @@
+import logging
 import pandas as pd
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
 from shapely.geometry.polygon import orient
+from shapely.validation import make_valid, explain_validity
+import shapely
+from packaging import version
 
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_HEADERS = ['customerid', 'zoneid', 'suffixid', 'areanumber', 'seqno', 'x', 'y']
 
@@ -32,6 +38,8 @@ def split_geometry(df: pd.DataFrame) -> dict:
         dict: dict with exterior and holes as keys. Each key contains a list of tuples representing the coordinates.
         If no valid geometry is found, returns None.
     """
+    logger.debug("Starting split_geometry function for areanumber group.")
+    logger.debug("Input dataframe shape: %s", df.shape)
     coords = df[['x', 'y']].values.tolist()
     parts = []
     current = []
@@ -47,12 +55,14 @@ def split_geometry(df: pd.DataFrame) -> dict:
         parts.append(current)
 
     if not parts:
+        logger.warning("No valid geometry parts found.")
         return None
 
-    return {
+    result = {
         'exterior': parts[0],
         'holes': parts[1:] if len(parts) > 1 else []
     }
+    return result
 
 
 def build_multipolygon(group_df: pd.DataFrame) -> Polygon or MultiPolygon: # type: ignore
@@ -78,6 +88,24 @@ def build_multipolygon(group_df: pd.DataFrame) -> Polygon or MultiPolygon: # typ
         if geom_parts:
             poly = Polygon(geom_parts['exterior'], holes=geom_parts['holes'])
             poly = orient(poly, sign=1.0)  # Fix winding
+            if not poly.is_valid:
+                logger.warning("Invalid polygon detected: %s", poly)
+                logger.warning("Validity explanation: %s", explain_validity(poly))
+                logger.warning("Attempting to fix invalid polygon.")
+                if version.parse(shapely.__version__) >= version.parse("2.1.0"):
+                    poly = make_valid(poly, method='structure')
+                else:
+                    poly = make_valid(poly)
+                if isinstance(poly, GeometryCollection):
+                    logger.warning("GeometryCollection detected after make_valid. Extracting only polygon and multipolygon geometries.")
+                    extracted = [geom for geom in poly.geoms if isinstance(geom, (Polygon, MultiPolygon)) and not geom.is_empty]
+                    if extracted:
+                        polygons.extend(extracted)
+                    else:
+                        logger.warning("No valid polygons found in GeometryCollection.")
+                    continue
+            if poly.is_empty:
+                logger.warning("Empty polygon detected.")
             if poly.is_valid and not poly.is_empty:
                 polygons.append(poly)
 
