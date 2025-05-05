@@ -227,6 +227,7 @@ class MBRShapefileGenerator:
         self.dlg.zoneid_list_widget.itemChanged.connect(
             self.sync_customer_checkboxes)
         self.dlg.process_button.clicked.connect(self.process)
+        self.dlg.button_box.button(self.dlg.button_box.Reset).clicked.connect(self.reset_ui)
         
     def append_log_to_widget(self, msg):
         """Changes the logging mechanism to append the log message to the log text edit widget in the dialog.
@@ -278,8 +279,13 @@ class MBRShapefileGenerator:
         if not all(o in df.columns for o in REQUIRED_HEADERS):
             self.logger.error("Input file missing the following required headers: %s",
                               [o for o in REQUIRED_HEADERS if o not in df.columns])
+            self.dlg.process_button.setToolTip(f"Input file missing the following required headers: {[o for o in REQUIRED_HEADERS if o not in df.columns]}")
             return None
         df['zoneid_suffixid'] = df.apply(zoneid_suffixid_combine, axis=1)
+        unique_customers = df['customerid'].nunique()
+        unique_zones = df['zoneid_suffixid'].nunique()
+        self.logger.info("Unique customerids: %d", unique_customers)
+        self.logger.info("Unique zoneid_suffixids: %d", unique_zones)
         return df
 
     def parse_initial_output_dir(self):
@@ -442,7 +448,9 @@ class MBRShapefileGenerator:
             zid for zid, item in self.zone_items.items()
             if item.checkState() == Qt.Checked
         ]
-        for customerid in selected_customers:
+        self.dlg.progress_bar.setMaximum(len(selected_customers))
+        self.dlg.progress_bar.setValue(0)
+        for i, customerid in enumerate(selected_customers):
             # Add logic for geodatabase creation later
             output_dir = os.path.join(self.dlg.output_dir_file_widget.filePath(), customerid.lower())
             if not os.path.exists(output_dir):
@@ -471,6 +479,29 @@ class MBRShapefileGenerator:
                 elif self.dlg.output_type_combo_box.currentText() == 'Shapefile':
                     gdf.to_file(os.path.join(output_dir, f"{zone}.shp"), driver='ESRI Shapefile')
                     self.logger.info("Shapefile created for zone %s", zone)
+                self.dlg.progress_bar.setValue(i + 1)
+    
+    def reset_ui(self):
+        """Resets the UI to its initial state. This includes clearing the input and output file widgets,
+        clearing the customerid and zoneid list widgets, and resetting the progress bar.
+        It also clears the log text edit widget and disables the process button.
+        The function also resets init variables
+        """
+        self.df = None
+        self.customer_to_zones = {}
+        self.zone_to_customers = {}
+        self.customer_items = {}
+        self.zone_items = {}
+        self.dlg.customerid_list_widget.clear()
+        self.dlg.zoneid_list_widget.clear()
+        self.dlg.input_file_widget.setFilePath("")
+        self.dlg.output_dir_file_widget.setFilePath("")
+        self.dlg.log_text_edit.clear()
+        self.dlg.process_button.setEnabled(False)
+        self.dlg.output_type_combo_box.setCurrentIndex(0)
+        self.dlg.display_check_box.setChecked(True)
+        self.dlg.progress_bar.setValue(0)
+        self.logger.info("UI reset completed.")
             
             
     def run(self):
@@ -485,6 +516,8 @@ class MBRShapefileGenerator:
         self.dlg.show()
         # Run the dialog event loop
         result = self.dlg.exec_()
+        
+        self.reset_ui()
         # See if OK was pressed
         if result:
             # Do something useful here - delete the line containing pass and
