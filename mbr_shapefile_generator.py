@@ -92,7 +92,8 @@ class ProcessWorker(QObject):
                 )
                 
                 path = None
-                path = os.path.join(output_dir, f"{zone}.{self.output_type.lower()}")
+                output_ext = 'kml' if self.output_type == 'KML' else 'shp'
+                path = os.path.join(output_dir, f"{zone}.{output_ext}")
                 if os.path.exists(path):
                     try:
                         os.remove(path)
