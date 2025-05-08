@@ -41,6 +41,12 @@ import webbrowser
 
 
 class QTextEditLogger(QObject, logging.Handler):
+    """Custom logging handler to redirect log messages to a QPlainTextEdit widget.
+
+    Args:
+        QObject (QObject): QObject
+        logging (logging.Handler): logging.Handler
+    """
     log_signal = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -52,6 +58,11 @@ class QTextEditLogger(QObject, logging.Handler):
         self.log_signal.emit(msg)
         
 class ProcessWorker(QObject):
+    """Worker thread for processing the shapefile generation.
+
+    Args:
+        QObject (QObject): QObject
+    """
     progress = pyqtSignal(int)
     display_layers = pyqtSignal(list)
     log_message = pyqtSignal(int, str)  # level, message
@@ -66,6 +77,14 @@ class ProcessWorker(QObject):
         self.output_type = output_type
         
     def run(self):
+        """Processes the dataframe and generates shapefiles or KML files for the selected customers and zones.
+        The function first creates a directory for each customerid in the output directory.
+        Then it iterates through the selected customers and zones, creating a shapefile or KML file for each zone.
+        The shapefile or KML file is created using the geopandas library and the build_multipolygon function.
+        The function emits log messages for each step of the process, including errors and warnings.
+        The function also emits a progress signal for each zone processed.
+        Finally, it emits a finished signal when the process is complete.
+        """
         final_datasets = []
         for customerid in self.selected_customers:
             # Add logic for geodatabase creation later
@@ -294,6 +313,8 @@ class MBRShapefileGenerator:
             self.iface.removeToolBarIcon(action)
 
     def _connect_signals(self):
+        """Connects signals to slots for the dialog elements.
+        """
         self.dlg.input_file_widget.fileChanged.connect(
             self.parse_initial_output_dir)
         self.dlg.input_file_widget.fileChanged.connect(
