@@ -109,7 +109,7 @@
      <item row="0" column="1">
       <widget class="QgsFileWidget" name="input_file_widget">
        <property name="filter">
-        <string>*.csv;;*.xlsx</string>
+        <string>CSV or Excel Files (*.csv *.xlsx)</string>
        </property>
       </widget>
      </item>
