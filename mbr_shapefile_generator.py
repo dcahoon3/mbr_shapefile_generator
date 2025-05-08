@@ -680,7 +680,13 @@ class MBRShapefileGenerator:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start == True:
             self.first_start = False
-
+            
+        # Prevent multiple instances of the widget
+        if self.dlg is not None and self.dlg.isVisible():
+            self.dlg.raise_()
+            self.dlg.activateWindow()
+            return
+        
         # show the dialog
         self.dlg.show()
         # Run the dialog event loop
