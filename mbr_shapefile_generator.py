@@ -36,7 +36,8 @@ from qgis.PyQt.QtWidgets import QAction, QListWidgetItem
 from .resources import *
 # Import the code for the dialog
 from .mbr_shapefile_generator_dialog import MBRShapefileGeneratorDialog
-from .utility import zoneid_suffixid_combine, build_multipolygon, REQUIRED_HEADERS
+from .utility import zoneid_suffixid_combine, build_multipolygon, REQUIRED_HEADERS, HELP_DOCUMENTATION
+import webbrowser
 
 
 class QTextEditLogger(QObject, logging.Handler):
@@ -302,6 +303,11 @@ class MBRShapefileGenerator:
             self.sync_customer_checkboxes)
         self.dlg.process_button.clicked.connect(self.process)
         self.dlg.button_box.button(self.dlg.button_box.Reset).clicked.connect(self.reset_ui)
+        self.dlg.button_box.button(self.dlg.button_box.Help).clicked.connect(self.open_help_url)
+
+    def open_help_url(self):
+        """Opens the help documentation URL in the default web browser."""
+        webbrowser.open(HELP_DOCUMENTATION)
         
     def append_log_to_widget(self, msg):
         """Changes the logging mechanism to append the log message to the log text edit widget in the dialog.

@@ -10,6 +10,7 @@ from packaging import version
 logger = logging.getLogger(__name__)
 
 REQUIRED_HEADERS = ['customerid', 'zoneid', 'suffixid', 'areanumber', 'seqno', 'x', 'y']
+HELP_DOCUMENTATION = "https://korterra.atlassian.net/wiki/x/FIA1wg"
 
 def zoneid_suffixid_combine(row: pd.Series) -> str:
     """Combines zoneid and suffixid columns in a dataframe into a single string.
