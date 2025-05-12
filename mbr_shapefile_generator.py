@@ -186,16 +186,7 @@ class MBRShapefileGenerator:
         self.customer_items = {}  # Maps customerid → QListWidgetItem
         self.zone_items = {}      # Maps zone_id → QListWidgetItem
 
-        self.logger = logging.getLogger()
-        for handler in list(self.logger.handlers):
-            self.logger.removeHandler(handler)
-            
-        self.log_handler = QTextEditLogger(self.dlg)
-        self.log_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-        self.log_handler.log_signal.connect(self.append_log_to_widget)
-
-        self.logger.addHandler(self.log_handler)
-        self.logger.setLevel(logging.DEBUG)
+        self.initialize_logging()
         
         self.thread = None
         self.worker = None
@@ -326,6 +317,18 @@ class MBRShapefileGenerator:
         self.dlg.process_button.clicked.connect(self.process)
         self.dlg.button_box.button(self.dlg.button_box.Reset).clicked.connect(self.reset_ui)
         self.dlg.button_box.button(self.dlg.button_box.Help).clicked.connect(self.open_help_url)
+    
+    def initialize_logging(self):
+        self.logger = logging.getLogger()
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
+            
+        self.log_handler = QTextEditLogger(self.dlg)
+        self.log_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+        self.log_handler.log_signal.connect(self.append_log_to_widget)
+
+        self.logger.addHandler(self.log_handler)
+        self.logger.setLevel(logging.DEBUG)
 
     def open_help_url(self):
         """Opens the help documentation URL in the default web browser."""
@@ -677,6 +680,7 @@ class MBRShapefileGenerator:
         It also clears the log text edit widget and disables the process button.
         The function also resets init variables
         """
+        self.initialize_logging()
         self.df = None
         self.customer_to_zones = {}
         self.zone_to_customers = {}
